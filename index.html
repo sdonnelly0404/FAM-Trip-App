@@ -1190,15 +1190,26 @@ async function refreshCal(){
   await loadCalEvents(viewDate);
 }
 
+async function getCalendarId(token){
+  // Find the "FAM Trips" calendar id
+  try{
+    const res=await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList',{headers:{Authorization:'Bearer '+token}});
+    const data=await res.json();
+    const cal=(data.items||[]).find(c=>c.summary&&c.summary.toLowerCase().includes('fam trip'));
+    return cal?encodeURIComponent(cal.id):'primary';
+  }catch(e){return 'primary';}
+}
+
 async function loadCalEvents(dateStr){
   const token=localStorage.getItem('cal_token');
   if(!token)return;
   const c=document.getElementById('todayContent');
   c.innerHTML=`<div class="loading-row"><div class="dot-pulse"><span></span><span></span><span></span></div> Loading calendar...</div>`;
   try{
+    const calId=await getCalendarId(token);
     const start=dateStr+'T00:00:00Z';
     const end=dateStr+'T23:59:59Z';
-    const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${start}&timeMax=${end}&singleEvents=true&orderBy=startTime&maxResults=20`,{headers:{Authorization:'Bearer '+token}});
+    const res=await fetch(`https://www.googleapis.com/calendar/v3/calendars/${calId}/events?timeMin=${start}&timeMax=${end}&singleEvents=true&orderBy=startTime&maxResults=20`,{headers:{Authorization:'Bearer '+token}});
     if(res.status===401){disconnectCalendar();return;}
     const data=await res.json();
     const events=(data.items||[]).filter(e=>e.status!=='cancelled');

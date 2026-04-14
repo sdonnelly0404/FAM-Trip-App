@@ -442,9 +442,25 @@ async function gcalFetchEvents(startDate, endDate) {
       // Infer type from title/description
       const title = (e.summary || '').toLowerCase();
       let type = 'experience';
-      if (title.includes('check-in') || title.includes('checkin') || title.includes('hotel') || title.includes('resort') || title.includes('check in')) type = 'hotel';
-      else if (title.includes('dinner') || title.includes('lunch') || title.includes('breakfast') || title.includes('restaurant') || title.includes('brunch') || title.includes('cafe')) type = 'food';
-      else if (title.includes('spa') || title.includes('tour') || title.includes('excursion') || title.includes('boat') || title.includes('snorkel') || title.includes('activity')) type = 'experience';
+      // Hotel detection — must NOT be a flight
+      const isHotel = (title.includes('check-in') || title.includes('checkin') || title.includes('check in') ||
+        title.includes('hotel') || title.includes('resort') || title.includes('inn') || title.includes('marriott') ||
+        title.includes('hilton') || title.includes('hyatt') || title.includes('westin') || title.includes('sheraton') ||
+        title.includes('fairmont') || title.includes('four seasons') || title.includes('ritz')) &&
+        !title.includes('flight') && !title.includes('airline') && !title.includes('depart') && !title.includes('arrive');
+      const isFlight = title.includes('flight') || title.includes('airline') || title.includes('departs') ||
+        title.includes('arrives') || title.includes(' to ') && (title.includes('aa ') || title.includes('ua ') || title.includes('dl '));
+      const isFood = title.includes('dinner') || title.includes('lunch') || title.includes('breakfast') ||
+        title.includes('restaurant') || title.includes('brunch') || title.includes('café') || title.includes('cafe') ||
+        title.includes('dining') || title.includes('reserv');
+      const isSpa = title.includes('spa') || title.includes('massage') || title.includes('treatment');
+      const isTour = title.includes('tour') || title.includes('excursion') || title.includes('boat') ||
+        title.includes('snorkel') || title.includes('activity') || title.includes('hike');
+
+      if (isFlight) type = 'flight';
+      else if (isHotel) type = 'hotel';
+      else if (isFood) type = 'food';
+      else if (isSpa || isTour) type = 'experience';
 
       return {
         id: uid(),
@@ -558,11 +574,20 @@ function PhotoStrip({ photos = [], onAdd, category = '' }) {
       <div className="input-label" style={{ marginBottom: 8 }}>Photos</div>
       <div className="photo-strip">
         {photos.map((p, i) => (
-          <div key={i} className="photo-thumb">{p}</div>
+          p.startsWith('data:') 
+            ? <img key={i} className="photo-thumb" src={p} style={{ objectFit: 'cover' }} alt="photo" />
+            : <div key={i} className="photo-thumb">{p}</div>
         ))}
-        <div className="photo-thumb photo-add" onClick={onAdd} title="Add photo">
+        <label className="photo-thumb photo-add" title="Add photo" style={{ cursor: 'pointer' }}>
           <span style={{ color: 'var(--warm-mid)', fontSize: 28 }}>+</span>
-        </div>
+          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = ev => onAdd(ev.target.result);
+            reader.readAsDataURL(file);
+          }} />
+        </label>
       </div>
     </div>
   );
@@ -601,7 +626,7 @@ function ReviewSheet({ title, prompts, data = {}, onSave, onClose }) {
               )}
             </div>
           ))}
-          <PhotoStrip photos={form.photos || []} onAdd={() => { const emojis=['🏨','🌅','🍽️','🌊','🌴','✨']; set('photos', [...(form.photos||[]), emojis[Math.floor(Math.random()*emojis.length)]]); }} />
+          <PhotoStrip photos={form.photos || []} onAdd={(dataUrl) => set('photos', [...(form.photos||[]), dataUrl])} />
           <button className="btn-primary" style={{ marginTop: 8 }} onClick={() => { onSave(form); onClose(); }}>Save Notes</button>
         </div>
       </div>
@@ -800,10 +825,7 @@ function NewTripView({ onSave, onBack }) {
           <input placeholder="e.g. Excellence Playa Mujeres" value={form.name} onChange={e => set('name', e.target.value)} />
         </div>
 
-        <div className="input-group">
-          <div className="input-label">Destination</div>
-          <input placeholder="e.g. Cancun, Mexico" value={form.destination} onChange={e => set('destination', e.target.value)} />
-        </div>
+        <DestinationInput value={form.destination} onChange={v => set('destination', v)} />
 
         <div className="input-group">
           <div className="input-label">Trip Dates</div>
@@ -1469,34 +1491,41 @@ function GCalCreateButton({ form, valid, onSave }) {
     if (gcalIsConnected()) {
       gcalEvents = await gcalFetchEvents(form.startDate, form.endDate);
     }
-    // Auto-detect hotel from GCal events
+    // Auto-detect hotel from GCal events (exclude flights)
     let autoHotel = null;
     const hotelEvent = gcalEvents.find(e => e.type === 'hotel');
     if (hotelEvent) {
+      // Clean up the hotel name
+      const hotelName = hotelEvent.title
+        .replace(/check-?in\s*[-—:]\s*/i, '')
+        .replace(/check-?out\s*[-—:]\s*/i, '')
+        .replace(/hotel\s*[-—:]\s*/i, '')
+        .replace(/reservation\s*[-—:]\s*/i, '')
+        .trim();
       autoHotel = {
         id: uid(),
-        name: hotelEvent.title.replace(/check-?in\s*[-—]?\s*/i, '').replace(/check-?out\s*[-—]?\s*/i, '').trim(),
+        name: hotelName || hotelEvent.title,
         address: hotelEvent.location || '',
         stars: 5,
         rating: null,
-        type: 'Resort',
+        type: 'Hotel',
         desc: 'Imported from Google Calendar',
         website: '',
         fromCalendar: true,
         notes: {}
       };
     }
-    // Auto-detect restaurants from GCal events
+    // Auto-detect restaurants from GCal events (exclude flights)
     const autoRestaurants = gcalEvents
       .filter(e => e.type === 'food')
       .map(e => ({
         id: uid(),
-        name: e.title,
+        name: e.title.replace(/dinner\s*[-—:]\s*/i,'').replace(/lunch\s*[-—:]\s*/i,'').replace(/breakfast\s*[-—:]\s*/i,'').replace(/reserv[a-z]*\s*[-—:]\s*/i,'').trim() || e.title,
         cuisine: 'Restaurant',
         address: e.location || '',
         price: '',
         rating: null,
-        desc: 'Imported from Google Calendar',
+        desc: 'Imported from Google Calendar — ' + e.time,
         website: '',
         fromCalendar: true,
         notes: {}
@@ -1513,10 +1542,92 @@ function GCalCreateButton({ form, valid, onSave }) {
 }
 
 
+// ── DESTINATION AUTOCOMPLETE ──────────────────────────────────────────────────
+function DestinationInput({ value, onChange }) {
+  const [query, setQuery] = useState(value || '');
+  const [suggestions, setSuggestions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const timerRef = useRef(null);
+
+  const search = async (q) => {
+    if (q.length < 3) { setSuggestions([]); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(
+        WORKER_URL + '/places?' + new URLSearchParams({ query: q + ' city destination travel' })
+      );
+      const data = await res.json();
+      const places = (data.places || []).map(p => ({
+        name: p.displayName?.text || '',
+        address: p.formattedAddress || '',
+      }));
+      setSuggestions(places.slice(0, 5));
+    } catch(e) {}
+    setLoading(false);
+  };
+
+  const handleChange = (e) => {
+    const q = e.target.value;
+    setQuery(q);
+    onChange(q);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => search(q), 400);
+  };
+
+  const select = (place) => {
+    const val = place.address || place.name;
+    setQuery(val);
+    onChange(val);
+    setSuggestions([]);
+  };
+
+  return (
+    <div className="input-group" style={{ position: 'relative' }}>
+      <div className="input-label">Destination</div>
+      <input
+        placeholder="e.g. San Juan, Puerto Rico"
+        value={query}
+        onChange={handleChange}
+        autoComplete="off"
+      />
+      {loading && <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 4 }}>Searching...</div>}
+      {suggestions.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 999,
+          background: 'var(--white)', border: '1.5px solid var(--sand)',
+          borderRadius: 10, boxShadow: 'var(--shadow)', overflow: 'hidden', marginTop: 2
+        }}>
+          {suggestions.map((s, i) => (
+            <div key={i} onClick={() => select(s)} style={{
+              padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid var(--sand)',
+              fontSize: 13
+            }}>
+              <div style={{ fontWeight: 500 }}>{s.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 2 }}>{s.address}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function App() {
-  const [trips, setTrips] = useState([DEMO_TRIP]);
-  const [view, setView] = useState('list'); // list | new | detail
+  const [trips, setTrips] = useState(() => {
+    try {
+      const saved = localStorage.getItem('famtrip_trips');
+      return saved ? JSON.parse(saved) : [DEMO_TRIP];
+    } catch(e) { return [DEMO_TRIP]; }
+  });
+  const [view, setView] = useState('list');
   const [selectedTrip, setSelectedTrip] = useState(null);
+
+  // Save trips to localStorage whenever they change
+  useEffect(() => {
+    try { localStorage.setItem('famtrip_trips', JSON.stringify(trips)); }
+    catch(e) {}
+  }, [trips]);
 
   useEffect(() => {
     gcalHandleCallback();

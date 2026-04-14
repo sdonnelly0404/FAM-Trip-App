@@ -509,45 +509,45 @@ function priceLevel(n) {
 }
 
 async function searchHotels(query) {
-  const data = await searchGooglePlaces(query + ' hotel', 'lodging');
+  const data = await searchGooglePlaces(query + ' hotel resort');
   if (!data) {
-    // CORS fallback — Google Places requires a backend proxy for browser calls
-    // Return helpful message
-    alert('Hotel search requires a small backend setup for browser security. For now, type your hotel name directly and tap "Add Manually".');
+    alert('Search unavailable. Please add the hotel manually.');
     return [];
   }
-  return (data.results || []).map(p => ({
+  return (data.places || []).map(p => ({
     id: uid(),
-    place_id: p.place_id,
-    name: p.name,
-    address: p.formatted_address || '',
-    stars: p.price_level ? p.price_level + 1 : 4,
+    place_id: p.id,
+    name: p.displayName?.text || p.name,
+    address: p.formattedAddress || '',
+    stars: p.priceLevel ? Math.min(p.priceLevel, 5) : 4,
     rating: p.rating ? p.rating.toFixed(1) : null,
     type: p.types?.includes('lodging') ? 'Hotel' : 'Property',
-    desc: p.types?.slice(0,3).join(', ') || '',
-    website: '',
-    price: priceLevel(p.price_level),
-    userRatings: p.user_ratings_total || 0,
+    desc: p.formattedAddress || '',
+    website: p.websiteUri || '',
+    phone: p.internationalPhoneNumber || '',
+    price: priceLevel(p.priceLevel),
+    userRatings: p.userRatingCount || 0,
   }));
 }
 
 async function searchRestaurants(query) {
-  const data = await searchGooglePlaces(query + ' restaurant', 'restaurant');
+  const data = await searchGooglePlaces(query + ' restaurant');
   if (!data) {
-    alert('Restaurant search requires a small backend setup for browser security. For now, type the restaurant name and tap "Add Manually".');
+    alert('Search unavailable. Please add the restaurant manually.');
     return [];
   }
-  return (data.results || []).map(p => ({
+  return (data.places || []).map(p => ({
     id: uid(),
-    place_id: p.place_id,
-    name: p.name,
-    cuisine: p.types?.find(t => !['restaurant','food','point_of_interest','establishment'].includes(t)) || 'Restaurant',
-    address: p.formatted_address || p.vicinity || '',
-    price: priceLevel(p.price_level),
+    place_id: p.id,
+    name: p.displayName?.text || p.name,
+    cuisine: p.types?.find(t => !['restaurant','food','point_of_interest','establishment','food'].includes(t))?.replace(/_/g,' ') || 'Restaurant',
+    address: p.formattedAddress || '',
+    price: priceLevel(p.priceLevel),
     rating: p.rating ? p.rating.toFixed(1) : null,
-    desc: p.vicinity || '',
-    website: '',
-    userRatings: p.user_ratings_total || 0,
+    desc: p.formattedAddress || '',
+    website: p.websiteUri || '',
+    phone: p.internationalPhoneNumber || '',
+    userRatings: p.userRatingCount || 0,
   }));
 }
 

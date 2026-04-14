@@ -420,7 +420,7 @@ async function gcalFetchEvents(startDate, endDate) {
     const timeMin = new Date(startDate + 'T00:00:00').toISOString();
     const timeMax = new Date(endDate + 'T23:59:59').toISOString();
     const eventsRes = await fetch(
-      \`https://www.googleapis.com/calendar/v3/calendars/\${calId}/events?\` +
+      `https://www.googleapis.com/calendar/v3/calendars/${calId}/events?` +
       new URLSearchParams({
         timeMin, timeMax,
         singleEvents: 'true',

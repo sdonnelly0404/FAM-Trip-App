@@ -333,7 +333,12 @@ function StarRating({ value = 0, onChange }) {
 async function callClaude(prompt, systemPrompt = '') {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': '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',
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -345,34 +350,220 @@ async function callClaude(prompt, systemPrompt = '') {
   return data.content?.[0]?.text || '';
 }
 
-// ── MOCK GCAL ────────────────────────────────────────────────────────────────
-function getMockGCalEvents(tripName, startDate, endDate) {
-  return [
-    { id: uid(), title: `Check-in — ${tripName} Hotel`, date: startDate, time: '3:00 PM', type: 'hotel' },
-    { id: uid(), title: 'Welcome Dinner — Restaurant Preview', date: startDate, time: '7:30 PM', type: 'food' },
-    { id: uid(), title: 'Property Tour & Spa Preview', date: endDate, time: '10:00 AM', type: 'experience' },
-    { id: uid(), title: `Check-out — ${tripName} Hotel`, date: endDate, time: '11:00 AM', type: 'hotel' },
-  ];
+
+// ── GOOGLE CALENDAR OAUTH ─────────────────────────────────────────────────────
+const WORKER_URL = 'https://fam-cal.sarah-lamee.workers.dev';
+const GCAL_SCOPES = 'https://www.googleapis.com/auth/calendar.readonly';
+
+function gcalIsConnected() {
+  try {
+    const token = localStorage.getItem('gcal_access_token');
+    const expiry = parseInt(localStorage.getItem('gcal_token_expiry') || '0');
+    return !!(token && expiry > Date.now());
+  } catch(e) { return false; }
 }
 
-// ── HOTEL SEARCH (OpenTripMap — free, no key needed for basic) ──────────────
+function gcalConnect() {
+  const params = new URLSearchParams({
+    redirect_uri: window.location.origin + window.location.pathname
+  });
+  window.location.href = WORKER_URL + '/auth?' + params.toString();
+}
+
+function gcalDisconnect() {
+  try {
+    localStorage.removeItem('gcal_access_token');
+    localStorage.removeItem('gcal_token_expiry');
+    localStorage.removeItem('gcal_refresh_token');
+  } catch(e) {}
+}
+
+async function gcalRefreshIfNeeded() {
+  try {
+    const expiry = parseInt(localStorage.getItem('gcal_token_expiry') || '0');
+    if (expiry > Date.now() + 60000) return true; // still valid
+    const refresh = localStorage.getItem('gcal_refresh_token');
+    if (!refresh) return false;
+    const res = await fetch(WORKER_URL + '/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refresh })
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    localStorage.setItem('gcal_access_token', data.access_token);
+    localStorage.setItem('gcal_token_expiry', String(data.expiry));
+    return true;
+  } catch(e) { return false; }
+}
+
+async function gcalFetchEvents(startDate, endDate) {
+  try {
+    const ok = await gcalRefreshIfNeeded();
+    if (!ok) return [];
+    const token = localStorage.getItem('gcal_access_token');
+
+    // Find the FAM Trips calendar
+    const calListRes = await fetch(
+      'https://www.googleapis.com/calendar/v3/users/me/calendarList',
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const calList = await calListRes.json();
+    const famCal = calList.items?.find(c =>
+      c.summary?.toLowerCase().includes('fam trip') ||
+      c.summary?.toLowerCase().includes('fam trips')
+    );
+    // Fall back to primary if no FAM Trips calendar found
+    const calId = famCal ? encodeURIComponent(famCal.id) : 'primary';
+
+    // Fetch events in date range
+    const timeMin = new Date(startDate + 'T00:00:00').toISOString();
+    const timeMax = new Date(endDate + 'T23:59:59').toISOString();
+    const eventsRes = await fetch(
+      \`https://www.googleapis.com/calendar/v3/calendars/\${calId}/events?\` +
+      new URLSearchParams({
+        timeMin, timeMax,
+        singleEvents: 'true',
+        orderBy: 'startTime',
+        maxResults: '50'
+      }),
+      { headers: { Authorization: 'Bearer ' + token } }
+    );
+    const eventsData = await eventsRes.json();
+    const items = eventsData.items || [];
+
+    // Map to our event format
+    return items.map(e => {
+      const start = e.start?.dateTime || e.start?.date || startDate;
+      const dateStr = start.split('T')[0];
+      const timeStr = e.start?.dateTime
+        ? new Date(e.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        : 'All day';
+      // Infer type from title/description
+      const title = (e.summary || '').toLowerCase();
+      let type = 'experience';
+      if (title.includes('check-in') || title.includes('checkin') || title.includes('hotel') || title.includes('resort') || title.includes('check in')) type = 'hotel';
+      else if (title.includes('dinner') || title.includes('lunch') || title.includes('breakfast') || title.includes('restaurant') || title.includes('brunch') || title.includes('cafe')) type = 'food';
+      else if (title.includes('spa') || title.includes('tour') || title.includes('excursion') || title.includes('boat') || title.includes('snorkel') || title.includes('activity')) type = 'experience';
+
+      return {
+        id: uid(),
+        title: e.summary || 'Event',
+        date: dateStr,
+        time: timeStr,
+        type,
+        location: e.location || '',
+        description: e.description || ''
+      };
+    });
+  } catch(err) {
+    console.error('GCal fetch error:', err);
+    return [];
+  }
+}
+
+// Handle OAuth callback (runs on page load)
+function gcalHandleCallback() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('access_token');
+    const expiry = params.get('expiry');
+    const refresh = params.get('refresh_token');
+    if (token && expiry) {
+      localStorage.setItem('gcal_access_token', token);
+      localStorage.setItem('gcal_token_expiry', expiry);
+      if (refresh) localStorage.setItem('gcal_refresh_token', refresh);
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+      return true;
+    }
+  } catch(e) {}
+  return false;
+}
+
+
+// ── FOURSQUARE PLACES API (real search) ──────────────────────────────────────
+// Free tier: 1,000 calls/day, no credit card needed
+// Get your key at: foursquare.com/developers → Create App → API Key
+// Paste it below:
+const FSQ_KEY = 'ADH1RZ2CWQWL5E0N3EK4HDDGGZ4OHJ5ZYBUCZLYLBJDEHSJJ';
+
+function getFsqKey() {
+  return FSQ_KEY;
+}
+
+function priceTier(n) {
+  if (!n) return '';
+  return ['$','$$','$$$','$$$$'][n-1] || '';
+}
+
+async function searchFoursquare(query, categories) {
+  const key = getFsqKey();
+  if (!key) return null; // user cancelled prompt
+
+  try {
+    const params = new URLSearchParams({
+      query,
+      categories,
+      limit: '5',
+      sort: 'RELEVANCE',
+      fields: 'name,location,categories,rating,price,website,tel,hours_popular,photos,description'
+    });
+    const res = await fetch(
+      'https://api.foursquare.com/v3/places/search?' + params,
+      { headers: { Authorization: key, Accept: 'application/json' } }
+    );
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.removeItem('fsq_api_key');
+        alert('Foursquare API key is invalid. Please try again.');
+      }
+      return null;
+    }
+    return await res.json();
+  } catch(e) {
+    console.error('Foursquare error:', e);
+    return null;
+  }
+}
+
 async function searchHotels(query) {
-  await new Promise(r => setTimeout(r, 800));
-  const hotels = [
-    { id: uid(), name: `${query} Grand Resort`, address: `123 Oceanfront Blvd`, stars: 5, type: 'Resort', desc: 'Award-winning beachfront resort with 3 pools and a world-class spa.' },
-    { id: uid(), name: `${query} Boutique Hotel`, address: `45 Old Town Square`, stars: 4, type: 'Boutique', desc: 'Intimate property in a renovated historic building, steps from dining.' },
-    { id: uid(), name: `The ${query} Collection`, address: `789 Hillside Drive`, stars: 5, type: 'Luxury', desc: 'Ultra-luxe hilltop escape with panoramic views and butler service.' },
-  ];
-  return hotels;
+  // Foursquare category 19014 = Hotels, 19048 = Resorts
+  const data = await searchFoursquare(query, '19014,19048,19022');
+  if (!data) return [];
+
+  return (data.results || []).map(p => ({
+    id: uid(),
+    fsq_id: p.fsq_id,
+    name: p.name,
+    address: [p.location?.address, p.location?.locality, p.location?.region].filter(Boolean).join(', '),
+    stars: p.rating ? Math.round(p.rating / 2) : 4,
+    rating: p.rating ? (p.rating / 10 * 5).toFixed(1) : null,
+    type: p.categories?.[0]?.name || 'Hotel',
+    desc: p.description || p.categories?.map(c => c.name).join(' · ') || '',
+    website: p.website || '',
+    phone: p.tel || '',
+    price: priceTier(p.price),
+  }));
 }
 
 async function searchRestaurants(query) {
-  await new Promise(r => setTimeout(r, 800));
-  return [
-    { id: uid(), name: `${query} Kitchen`, cuisine: 'Contemporary', price: '$$$', desc: 'Farm-to-table tasting menu in a striking glass pavilion.' },
-    { id: uid(), name: `Casa ${query}`, cuisine: 'Mediterranean', price: '$$', desc: 'Relaxed terrace dining with fresh catch and local wine.' },
-    { id: uid(), name: `${query} Rooftop Bar & Grill`, cuisine: 'Global', price: '$$$', desc: 'Skyline views, craft cocktails and sharing plates.' },
-  ];
+  // Foursquare category 13000 = Food, includes all dining
+  const data = await searchFoursquare(query, '13000,13338,13065,13032,13064');
+  if (!data) return [];
+
+  return (data.results || []).map(p => ({
+    id: uid(),
+    fsq_id: p.fsq_id,
+    name: p.name,
+    cuisine: p.categories?.[0]?.name || 'Restaurant',
+    address: [p.location?.address, p.location?.locality].filter(Boolean).join(', '),
+    price: priceTier(p.price),
+    rating: p.rating ? (p.rating / 10 * 5).toFixed(1) : null,
+    desc: p.description || p.categories?.map(c => c.name).join(' · ') || '',
+    website: p.website || '',
+    phone: p.tel || '',
+  }));
 }
 
 // ── PHOTO PLACEHOLDER ────────────────────────────────────────────────────────
@@ -543,7 +734,7 @@ const FAMILY_PROMPTS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ── TRIPS LIST ────────────────────────────────────────────────────────────────
-function TripsListView({ trips, onSelect, onCreate }) {
+function TripsListView({ trips, onSelect, onCreate, onDelete }) {
   const active = trips.filter(t => new Date(t.endDate) >= new Date());
   const past = trips.filter(t => new Date(t.endDate) < new Date());
   return (
@@ -557,15 +748,16 @@ function TripsListView({ trips, onSelect, onCreate }) {
       <div style={{ padding: '16px 16px 8px' }}>
         <button className="btn-gold" onClick={onCreate}>+ New Fam Trip</button>
       </div>
+      <GCalBanner />
 
       {active.length > 0 && <>
         <div className="section-label">Upcoming & Active</div>
-        {active.map(t => <TripItem key={t.id} trip={t} onClick={() => onSelect(t)} />)}
+        {active.map(t => <TripItem key={t.id} trip={t} onClick={() => onSelect(t)} onDelete={onDelete} />)}
       </>}
 
       {past.length > 0 && <>
         <div className="section-label">Past Trips</div>
-        {past.map(t => <TripItem key={t.id} trip={t} onClick={() => onSelect(t)} past />)}
+        {past.map(t => <TripItem key={t.id} trip={t} onClick={() => onSelect(t)} onDelete={onDelete} past />)}
       </>}
 
       {trips.length === 0 && (
@@ -584,16 +776,22 @@ function TripItem({ trip, onClick, past }) {
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : 0;
   return (
-    <div className="trip-item" onClick={onClick}>
-      <div className="trip-dot">{trip.emoji || '🏨'}</div>
-      <div className="trip-info">
+    <div className="trip-item">
+      <div className="trip-dot" onClick={onClick}>{trip.emoji || '🏨'}</div>
+      <div className="trip-info" onClick={onClick}>
         <div className="trip-name">{trip.name}</div>
         <div className="trip-meta">
           {trip.startDate ? `${fmtShort(trip.startDate)} – ${fmtShort(trip.endDate)} · ${nights}n` : 'Dates TBD'}
           {past && <span style={{ marginLeft: 8 }}><span className="badge badge-mist">Past</span></span>}
         </div>
       </div>
-      <div className="trip-arrow">›</div>
+      {onDelete && (
+        <button onClick={e => { e.stopPropagation(); if(window.confirm('Delete "' + trip.name + '"?')) onDelete(trip.id); }}
+          style={{ background:'none', border:'none', color:'var(--warm-mid)', fontSize:18, cursor:'pointer', padding:'4px 8px' }}>
+          🗑
+        </button>
+      )}
+      <div className="trip-arrow" onClick={onClick}>›</div>
     </div>
   );
 }
@@ -652,9 +850,7 @@ function NewTripView({ onSave, onBack }) {
           </div>
         )}
 
-        <button className="btn-primary" disabled={!valid} onClick={() => valid && onSave({ ...form, id: uid(), gcalEvents: getMockGCalEvents(form.name, form.startDate, form.endDate), hotel: null, restaurants: [], experiences: [], familyNotes: {}, hotelNotes: {} })} style={{ opacity: valid ? 1 : 0.4 }}>
-          Create Trip →
-        </button>
+        <GCalCreateButton form={form} valid={valid} onSave={onSave} />
         <div style={{ height: 20 }} />
       </div>
     </div>
@@ -834,10 +1030,14 @@ function HotelTab({ trip, onUpdate }) {
             <div key={r.id} className="search-result" onClick={() => selectHotel(r)}>
               <div className="flex-between">
                 <div className="search-result-name">{r.name}</div>
-                <div>{'⭐'.repeat(r.stars)}</div>
+                <div style={{display:'flex',gap:6,alignItems:'center'}}>
+                  {r.rating && <span style={{fontSize:12,color:'var(--gold)',fontWeight:500}}>★ {r.rating}</span>}
+                  {r.price && <span className="badge badge-mist">{r.price}</span>}
+                </div>
               </div>
               <div className="search-result-meta">{r.address} · {r.type}</div>
-              <div style={{ fontSize: 12, marginTop: 4, color: 'var(--ink)', opacity: 0.7 }}>{r.desc}</div>
+              {r.desc && <div style={{ fontSize: 12, marginTop: 4, color: 'var(--ink)', opacity: 0.7 }}>{r.desc}</div>}
+              {r.website && <div style={{fontSize:11,color:'var(--slate-blue)',marginTop:3}}>🔗 {r.website.replace('https://','').replace('http://','').split('/')[0]}</div>}
             </div>
           ))}
           {!results.length && !loading && (
@@ -943,10 +1143,14 @@ function FoodTab({ trip, onUpdate }) {
         <div key={r.id} className="search-result" onClick={() => addRestaurant(r)}>
           <div className="flex-between">
             <div className="search-result-name">{r.name}</div>
-            <div className="badge badge-mist">{r.price}</div>
+            <div style={{display:'flex',gap:6,alignItems:'center'}}>
+              {r.rating && <span style={{fontSize:12,color:'var(--gold)',fontWeight:500}}>★ {r.rating}</span>}
+              {r.price && <span className="badge badge-mist">{r.price}</span>}
+            </div>
           </div>
-          <div className="search-result-meta">{r.cuisine}</div>
-          <div style={{ fontSize: 12, marginTop: 3, opacity: 0.7 }}>{r.desc}</div>
+          <div className="search-result-meta">{r.cuisine}{r.address ? ' · ' + r.address : ''}</div>
+          {r.desc && <div style={{ fontSize: 12, marginTop: 3, opacity: 0.7 }}>{r.desc}</div>}
+          {r.website && <div style={{fontSize:11,color:'var(--slate-blue)',marginTop:3}}>🔗 {r.website.replace('https://','').replace('http://','').split('/')[0]}</div>}
         </div>
       ))}
 
@@ -1216,12 +1420,64 @@ const DEMO_TRIP = {
   startDate: '2026-05-10', endDate: '2026-05-14', emoji: '🏝️',
   gcalEvents: [], hotel: null, restaurants: [], experiences: [], familyNotes: {}, hotelNotes: {}
 };
-DEMO_TRIP.gcalEvents = getMockGCalEvents('Excellence Playa Mujeres', DEMO_TRIP.startDate, DEMO_TRIP.endDate);
+DEMO_TRIP.gcalEvents = []; // real events load when Google Calendar is connected
+
+// ── GCAL CONNECT BANNER ───────────────────────────────────────────────────────
+function GCalBanner({ onConnected }) {
+  const [connected, setConnected] = React.useState(gcalIsConnected());
+  React.useEffect(() => {
+    const wasCallback = gcalHandleCallback();
+    if (wasCallback) { setConnected(true); onConnected && onConnected(); }
+  }, []);
+  if (connected) return (
+    <div style={{ background: 'rgba(122,158,142,0.12)', borderLeft: '3px solid var(--sage)', padding: '10px 16px', margin: '0 16px 12px', borderRadius: '0 10px 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--sage)' }}>✓ Google Calendar connected</div>
+        <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 2 }}>Pulling from your FAM Trips calendar</div>
+      </div>
+      <button className="btn-small" onClick={() => { gcalDisconnect(); setConnected(false); }} style={{ fontSize: 11 }}>Disconnect</button>
+    </div>
+  );
+  return (
+    <div style={{ background: 'rgba(74,102,112,0.08)', borderLeft: '3px solid var(--slate-blue)', padding: '10px 16px', margin: '0 16px 12px', borderRadius: '0 10px 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--slate-blue)' }}>📅 Connect Google Calendar</div>
+        <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 2 }}>Auto-import your FAM Trips events</div>
+      </div>
+      <button className="btn-small" onClick={gcalConnect}>Connect</button>
+    </div>
+  );
+}
+
+// ── GCAL CREATE BUTTON ────────────────────────────────────────────────────────
+function GCalCreateButton({ form, valid, onSave }) {
+  const [loading, setLoading] = React.useState(false);
+  const handleCreate = async () => {
+    if (!valid) return;
+    setLoading(true);
+    let gcalEvents = [];
+    if (gcalIsConnected()) {
+      gcalEvents = await gcalFetchEvents(form.startDate, form.endDate);
+    }
+    onSave({ ...form, id: uid(), gcalEvents, hotel: null, restaurants: [], experiences: [], familyNotes: {}, hotelNotes: {} });
+    setLoading(false);
+  };
+  return (
+    <button className="btn-primary" disabled={!valid || loading} onClick={handleCreate} style={{ opacity: valid ? 1 : 0.4 }}>
+      {loading ? '📅 Importing calendar events…' : 'Create Trip →'}
+    </button>
+  );
+}
+
 
 function App() {
   const [trips, setTrips] = useState([DEMO_TRIP]);
   const [view, setView] = useState('list'); // list | new | detail
   const [selectedTrip, setSelectedTrip] = useState(null);
+
+  useEffect(() => {
+    gcalHandleCallback();
+  }, []);
 
   const updateTrip = (updates) => {
     const updated = { ...selectedTrip, ...updates };
@@ -1253,7 +1509,7 @@ function App() {
 
         {/* VIEWS */}
         {view === 'list' && (
-          <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} />
+          <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} onDelete={id => setTrips(ts => ts.filter(t => t.id !== id))} />
         )}
         {view === 'new' && <NewTripView onSave={createTrip} onBack={() => setView('list')} />}
         {view === 'detail' && selectedTrip && (

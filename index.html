@@ -1207,7 +1207,7 @@ function buildReport(){
   WRAPUP_QUESTIONS.forEach(q=>{const ans=S.wrapup.answers[q.id];if(ans&&(ans.chips.length||ans.text.trim())){lines.push(`• [${q.tagLbl}] ${q.q}`);if(ans.chips.length)lines.push('  '+ans.chips.join(', '));if(ans.text.trim())lines.push('  '+ans.text.trim());}});
   if(S.scorecard.length){lines.push('','── PROPERTY SCORECARD ──');S.scorecard.forEach(p=>{lines.push('',p.name+':');SCORE_CATS.forEach(c=>{const r=p.ratings[c];if(r)lines.push(`  ${c}: ${'★'.repeat(r)}${'☆'.repeat(5-r)}`);});if(p.notes)lines.push('  '+p.notes);});}
   if(S.expenses.length){lines.push('','── EXPENSES ──');const total=S.expenses.reduce((s,e)=>s+parseFloat(e.amount||0),0);S.expenses.forEach(e=>lines.push(`${e.date} | ${e.vendor} | ${e.category} | $${parseFloat(e.amount).toFixed(2)}`));lines.push('TOTAL: $'+total.toFixed(2));}
-  if(S.contacts.length){lines.push('','── KEY CONTACTS ──');S.contacts.forEach(c=>lines.push(`${c.name} (${c.role})${c.phone?' | '+c.phone:''}${c.email?' | '+c.email:''}${c.notes?' — '+c.notes:''}``));}
+  if(S.contacts.length){lines.push('','── KEY CONTACTS ──');S.contacts.forEach(c=>lines.push(`${c.name} (${c.role})${c.phone?' | '+c.phone:''}${c.email?' | '+c.email:''}${c.notes?' — '+c.notes:''}`));}
   lines.push('','═'.repeat(44),'End of FAM trip notes.');
   return lines.join('\n');
 }

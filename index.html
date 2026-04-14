@@ -771,7 +771,7 @@ function TripsListView({ trips, onSelect, onCreate, onDelete }) {
   );
 }
 
-function TripItem({ trip, onClick, past }) {
+function TripItem({ trip, onClick, past, onDelete }) {
   const nights = trip.startDate && trip.endDate
     ? Math.round((new Date(trip.endDate) - new Date(trip.startDate)) / 86400000)
     : 0;

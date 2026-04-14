@@ -482,94 +482,72 @@ function gcalHandleCallback() {
 }
 
 
-// ── FOURSQUARE PLACES API (real search) ──────────────────────────────────────
-// Free tier: 1,000 calls/day, no credit card needed
-// Get your key at: foursquare.com/developers → Create App → API Key
-// Paste it below:
-const FSQ_KEY = 'ADH1RZ2CWQWL5E0N3EK4HDDGGZ4OHJ5ZYBUCZLYLBJDEHSJJ';
+// ── GOOGLE PLACES API (real search) ──────────────────────────────────────────
+const GOOGLE_PLACES_KEY = 'AIzaSyC7cwZJLcO-dJVyJ_OA6P3AYlIgMaMSDhk';
 
-function getFsqKey() {
-  return FSQ_KEY;
-}
-
-function priceTier(n) {
-  if (!n) return '';
-  return ['$','$$','$$$','$$$$'][n-1] || '';
-}
-
-async function searchFoursquare(query, categories) {
-  const key = getFsqKey();
-  if (!key) return null; // user cancelled prompt
-
+async function searchGooglePlaces(query, type) {
   try {
-    const params = new URLSearchParams({
-      query,
-      categories,
-      limit: '5',
-      sort: 'RELEVANCE',
-      fields: 'name,location,categories,rating,price,website,tel,hours_popular,photos,description'
-    });
+    // Route through Cloudflare worker to avoid CORS restrictions
     const res = await fetch(
-      'https://api.foursquare.com/v3/places/search?' + params,
-      { headers: { Authorization: key, Accept: 'application/json' } }
+      WORKER_URL + '/places?' +
+      new URLSearchParams({ query, type })
     );
     if (!res.ok) {
-      const errText = await res.text();
-      console.error('Foursquare error:', res.status, errText);
-      if (res.status === 401 || res.status === 403) {
-        alert('Foursquare API key issue (' + res.status + '). Please check your key at foursquare.com/developers');
-      } else if (res.status === 429) {
-        alert('Too many searches — please wait a moment and try again.');
-      } else {
-        alert('Search error ' + res.status + ': ' + errText);
-      }
+      console.error('Places search error:', res.status);
       return null;
     }
-    const json = await res.json();
-    console.log('Foursquare results:', json);
-    return json;
+    return await res.json();
   } catch(e) {
-    console.error('Foursquare error:', e);
+    console.error('Places fetch error:', e);
     return null;
   }
 }
 
-async function searchHotels(query) {
-  // Foursquare category 19014 = Hotels, 19048 = Resorts
-  const data = await searchFoursquare(query, '19014,19048,19022');
-  if (!data) return [];
+function priceLevel(n) {
+  if (n == null) return '';
+  return ['$','$$','$$$','$$$$'][n] || '';
+}
 
+async function searchHotels(query) {
+  const data = await searchGooglePlaces(query + ' hotel', 'lodging');
+  if (!data) {
+    // CORS fallback — Google Places requires a backend proxy for browser calls
+    // Return helpful message
+    alert('Hotel search requires a small backend setup for browser security. For now, type your hotel name directly and tap "Add Manually".');
+    return [];
+  }
   return (data.results || []).map(p => ({
     id: uid(),
-    fsq_id: p.fsq_id,
+    place_id: p.place_id,
     name: p.name,
-    address: [p.location?.address, p.location?.locality, p.location?.region].filter(Boolean).join(', '),
-    stars: p.rating ? Math.round(p.rating / 2) : 4,
-    rating: p.rating ? (p.rating / 10 * 5).toFixed(1) : null,
-    type: p.categories?.[0]?.name || 'Hotel',
-    desc: p.description || p.categories?.map(c => c.name).join(' · ') || '',
-    website: p.website || '',
-    phone: p.tel || '',
-    price: priceTier(p.price),
+    address: p.formatted_address || '',
+    stars: p.price_level ? p.price_level + 1 : 4,
+    rating: p.rating ? p.rating.toFixed(1) : null,
+    type: p.types?.includes('lodging') ? 'Hotel' : 'Property',
+    desc: p.types?.slice(0,3).join(', ') || '',
+    website: '',
+    price: priceLevel(p.price_level),
+    userRatings: p.user_ratings_total || 0,
   }));
 }
 
 async function searchRestaurants(query) {
-  // Foursquare category 13000 = Food, includes all dining
-  const data = await searchFoursquare(query, '13000,13338,13065,13032,13064');
-  if (!data) return [];
-
+  const data = await searchGooglePlaces(query + ' restaurant', 'restaurant');
+  if (!data) {
+    alert('Restaurant search requires a small backend setup for browser security. For now, type the restaurant name and tap "Add Manually".');
+    return [];
+  }
   return (data.results || []).map(p => ({
     id: uid(),
-    fsq_id: p.fsq_id,
+    place_id: p.place_id,
     name: p.name,
-    cuisine: p.categories?.[0]?.name || 'Restaurant',
-    address: [p.location?.address, p.location?.locality].filter(Boolean).join(', '),
-    price: priceTier(p.price),
-    rating: p.rating ? (p.rating / 10 * 5).toFixed(1) : null,
-    desc: p.description || p.categories?.map(c => c.name).join(' · ') || '',
-    website: p.website || '',
-    phone: p.tel || '',
+    cuisine: p.types?.find(t => !['restaurant','food','point_of_interest','establishment'].includes(t)) || 'Restaurant',
+    address: p.formatted_address || p.vicinity || '',
+    price: priceLevel(p.price_level),
+    rating: p.rating ? p.rating.toFixed(1) : null,
+    desc: p.vicinity || '',
+    website: '',
+    userRatings: p.user_ratings_total || 0,
   }));
 }
 
@@ -1063,9 +1041,13 @@ function HotelTab({ trip, onUpdate }) {
             </div>
           ))}
           {!results.length && !loading && (
-            <div className="empty" style={{ paddingTop: 32 }}>
+            <div className="empty" style={{ paddingTop: 24 }}>
               <div className="empty-icon">🏨</div>
-              <div className="empty-sub">Search for your hotel above, or use the Google Calendar event detected for this trip.</div>
+              <div className="empty-sub" style={{ marginBottom: 16 }}>Search for your hotel above, or add it manually.</div>
+              <button className="btn-outline" onClick={() => {
+                const name = prompt('Hotel name?');
+                if (name) selectHotel({ id: uid(), name, address: '', stars: 5, type: 'Hotel', desc: '', website: '', rating: null, price: '' });
+              }}>+ Add Manually</button>
             </div>
           )}
         </div>
@@ -1193,7 +1175,13 @@ function FoodTab({ trip, onUpdate }) {
       {!(trip.restaurants || []).length && !results.length && !loading && (
         <div className="empty" style={{ paddingTop: 24 }}>
           <div className="empty-icon">🍽️</div>
-          <div className="empty-sub">Search above to find and add restaurants you visited.</div>
+          <div className="empty-sub" style={{ marginBottom: 16 }}>Search above or add a restaurant manually.</div>
+          <div style={{ padding: '0 16px' }}>
+            <button className="btn-outline" onClick={() => {
+              const name = prompt('Restaurant name?');
+              if (name) addRestaurant({ id: uid(), name, cuisine: 'Restaurant', address: '', price: '', rating: null, desc: '', website: '' });
+            }}>+ Add Manually</button>
+          </div>
         </div>
       )}
 

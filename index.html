@@ -514,13 +514,20 @@ async function searchFoursquare(query, categories) {
       { headers: { Authorization: key, Accept: 'application/json' } }
     );
     if (!res.ok) {
-      if (res.status === 401) {
-        localStorage.removeItem('fsq_api_key');
-        alert('Foursquare API key is invalid. Please try again.');
+      const errText = await res.text();
+      console.error('Foursquare error:', res.status, errText);
+      if (res.status === 401 || res.status === 403) {
+        alert('Foursquare API key issue (' + res.status + '). Please check your key at foursquare.com/developers');
+      } else if (res.status === 429) {
+        alert('Too many searches — please wait a moment and try again.');
+      } else {
+        alert('Search error ' + res.status + ': ' + errText);
       }
       return null;
     }
-    return await res.json();
+    const json = await res.json();
+    console.log('Foursquare results:', json);
+    return json;
   } catch(e) {
     console.error('Foursquare error:', e);
     return null;
@@ -820,15 +827,30 @@ function NewTripView({ onSave, onBack }) {
           <input placeholder="e.g. Cancun, Mexico" value={form.destination} onChange={e => set('destination', e.target.value)} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }} className="input-group">
-          <div>
-            <div className="input-label">Check-in Date</div>
-            <input type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
+        <div className="input-group">
+          <div className="input-label">Trip Dates</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginBottom: 4 }}>Check-in</div>
+              <input type="date" value={form.startDate}
+                onChange={e => {
+                  set('startDate', e.target.value);
+                  // Auto-focus end date after start is selected
+                  if (e.target.value) setTimeout(() => document.getElementById('endDate').focus(), 50);
+                }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginBottom: 4 }}>Check-out</div>
+              <input id="endDate" type="date" value={form.endDate}
+                min={form.startDate || ''}
+                onChange={e => set('endDate', e.target.value)} />
+            </div>
           </div>
-          <div>
-            <div className="input-label">Check-out Date</div>
-            <input type="date" value={form.endDate} onChange={e => set('endDate', e.target.value)} />
-          </div>
+          {form.startDate && form.endDate && (
+            <div style={{ fontSize: 12, color: 'var(--sage)', marginTop: 6 }}>
+              ✓ {Math.round((new Date(form.endDate) - new Date(form.startDate)) / 86400000)} nights
+            </div>
+          )}
         </div>
 
         <div className="input-group">
@@ -1459,7 +1481,40 @@ function GCalCreateButton({ form, valid, onSave }) {
     if (gcalIsConnected()) {
       gcalEvents = await gcalFetchEvents(form.startDate, form.endDate);
     }
-    onSave({ ...form, id: uid(), gcalEvents, hotel: null, restaurants: [], experiences: [], familyNotes: {}, hotelNotes: {} });
+    // Auto-detect hotel from GCal events
+    let autoHotel = null;
+    const hotelEvent = gcalEvents.find(e => e.type === 'hotel');
+    if (hotelEvent) {
+      autoHotel = {
+        id: uid(),
+        name: hotelEvent.title.replace(/check-?in\s*[-—]?\s*/i, '').replace(/check-?out\s*[-—]?\s*/i, '').trim(),
+        address: hotelEvent.location || '',
+        stars: 5,
+        rating: null,
+        type: 'Resort',
+        desc: 'Imported from Google Calendar',
+        website: '',
+        fromCalendar: true,
+        notes: {}
+      };
+    }
+    // Auto-detect restaurants from GCal events
+    const autoRestaurants = gcalEvents
+      .filter(e => e.type === 'food')
+      .map(e => ({
+        id: uid(),
+        name: e.title,
+        cuisine: 'Restaurant',
+        address: e.location || '',
+        price: '',
+        rating: null,
+        desc: 'Imported from Google Calendar',
+        website: '',
+        fromCalendar: true,
+        notes: {}
+      }));
+
+    onSave({ ...form, id: uid(), gcalEvents, hotel: autoHotel, restaurants: autoRestaurants, experiences: [], familyNotes: {}, hotelNotes: {} });
     setLoading(false);
   };
   return (

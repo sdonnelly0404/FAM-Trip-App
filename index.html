@@ -1424,8 +1424,8 @@ DEMO_TRIP.gcalEvents = []; // real events load when Google Calendar is connected
 
 // ── GCAL CONNECT BANNER ───────────────────────────────────────────────────────
 function GCalBanner({ onConnected }) {
-  const [connected, setConnected] = React.useState(gcalIsConnected());
-  React.useEffect(() => {
+  const [connected, setConnected] = useState(gcalIsConnected());
+  useEffect(() => {
     const wasCallback = gcalHandleCallback();
     if (wasCallback) { setConnected(true); onConnected && onConnected(); }
   }, []);
@@ -1442,7 +1442,7 @@ function GCalBanner({ onConnected }) {
     <div style={{ background: 'rgba(74,102,112,0.08)', borderLeft: '3px solid var(--slate-blue)', padding: '10px 16px', margin: '0 16px 12px', borderRadius: '0 10px 10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
       <div>
         <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--slate-blue)' }}>📅 Connect Google Calendar</div>
-        <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 2 }}>Auto-import your FAM Trips events</div>
+        <div style={{ fontSize: 11, color: 'var(--warm-mid)', marginTop: 2 }}>Sync your FAM Trips calendar events</div>
       </div>
       <button className="btn-small" onClick={gcalConnect}>Connect</button>
     </div>
@@ -1451,7 +1451,7 @@ function GCalBanner({ onConnected }) {
 
 // ── GCAL CREATE BUTTON ────────────────────────────────────────────────────────
 function GCalCreateButton({ form, valid, onSave }) {
-  const [loading, setLoading] = React.useState(false);
+  const [loading, setLoading] = useState(false);
   const handleCreate = async () => {
     if (!valid) return;
     setLoading(true);

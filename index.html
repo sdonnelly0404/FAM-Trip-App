@@ -1698,7 +1698,11 @@ function App() {
                 <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
                 <div style={{ fontSize: 13, color: 'var(--warm-mid)' }}>Loading your trips…</div>
               </div>
-            : <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} onDelete={id => setTrips(ts => ts.filter(t => t.id !== id))} />
+            : <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} onDelete={id => {
+              const updated = trips.filter(t => t.id !== id);
+              setTrips(updated);
+              saveTrips(updated);
+            }} />
         )}
         {view === 'new' && <NewTripView onSave={createTrip} onBack={() => setView('list')} />}
         {view === 'detail' && selectedTrip && (

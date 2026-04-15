@@ -759,11 +759,7 @@ function TripsListView({ trips, onSelect, onCreate, onDelete }) {
   const past = trips.filter(t => new Date(t.endDate) < new Date());
   return (
     <div className="scroll-content">
-      <div className="hero-band" style={{ paddingBottom: 24 }}>
-        <div className="hero-band-label">Travel Agent Portal</div>
-        <div className="hero-band-title">My Fam Trips</div>
-        <div style={{ fontSize: 13, opacity: 0.65, marginTop: 6 }}>{trips.length} trip{trips.length !== 1 ? 's' : ''} documented</div>
-      </div>
+      <div style={{ height: 8 }} />
 
       <div style={{ padding: '16px 16px 8px' }}>
         <button className="btn-gold" onClick={onCreate}>+ New Fam Trip</button>
@@ -1413,9 +1409,36 @@ function AISummaryTab({ trip }) {
         <div style={{ fontSize: 13, opacity: 0.7, marginTop: 6 }}>{completeness}/4 sections complete — more data = better output</div>
       </div>
 
-      <div style={{ padding: '16px 16px 0' }}>
+      <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <button className="btn-primary" onClick={genBlog} disabled={loadingBlog}>
           {loadingBlog ? '✍️ Writing blog post…' : '📝 Generate Blog Post'}
+        </button>
+        <button className="btn-small" style={{ width: '100%', justifyContent: 'center', padding: 12, fontSize: 13 }}
+          onClick={() => {
+            const ctx = buildContext();
+            const photoCount = [
+              ...(trip.hotel?.notes ? Object.values(trip.hotel.notes) : []),
+              ...(trip.restaurants || []).map(r => r.notes),
+              ...(trip.experiences || []).map(e => e.notes),
+            ].reduce((acc, n) => acc + (n?.photos?.length || 0), 0);
+            
+            const prompt = `I just got back from a FAM trip and want to write a blog post and Instagram caption. Here are all my notes:
+
+${ctx}
+
+${photoCount > 0 ? `I have ${photoCount} photos from the trip.
+
+` : ''}Please help me:
+1. Write a vivid, personal blog post (400-500 words) in my voice as a travel agent
+2. Write an Instagram caption with hashtags
+3. Be ready to iterate and refine based on my feedback`;
+            
+            navigator.clipboard.writeText(prompt).then(() => {
+              window.open('https://claude.ai', '_blank');
+              alert('✓ Trip notes copied to clipboard!\n\nPaste them into Claude to start working on your blog post together.');
+            });
+          }}>
+          ✨ Refine with Claude →
         </button>
       </div>
       {blog && (

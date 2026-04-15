@@ -334,14 +334,10 @@ function StarRating({ value = 0, onChange }) {
 // ── AI CALL ──────────────────────────────────────────────────────────────────
 async function callClaude(prompt, systemPrompt = '') {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    // Route through Cloudflare worker to keep API key secure
+    const res = await fetch(WORKER_URL + '/claude', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': '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',
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-opus-4-5',
         max_tokens: 1024,
@@ -351,8 +347,8 @@ async function callClaude(prompt, systemPrompt = '') {
     });
     if (!res.ok) {
       const err = await res.text();
-      console.error('Claude API error:', res.status, err);
-      alert('AI summary error ' + res.status + '. Check console for details.');
+      console.error('Claude proxy error:', res.status, err);
+      alert('AI summary error ' + res.status);
       return '';
     }
     const data = await res.json();

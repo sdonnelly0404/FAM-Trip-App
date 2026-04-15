@@ -1447,12 +1447,8 @@ function AISummaryTab({ trip }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROOT APP
 // ═══════════════════════════════════════════════════════════════════════════════
-const DEMO_TRIP = {
-  id: uid(), name: 'Excellence Playa Mujeres', destination: 'Cancun, Mexico',
-  startDate: '2026-05-10', endDate: '2026-05-14', emoji: '🏝️',
-  gcalEvents: [], hotel: null, restaurants: [], experiences: [], familyNotes: {}, hotelNotes: {}
-};
-DEMO_TRIP.gcalEvents = []; // real events load when Google Calendar is connected
+// No demo trip — app starts fresh and loads from KV
+const DEMO_TRIP = null;
 
 // ── GCAL CONNECT BANNER ───────────────────────────────────────────────────────
 function GCalBanner({ onConnected }) {
@@ -1617,7 +1613,7 @@ function App() {
   const [trips, setTrips] = useState([]);
   const [view, setView] = useState('list');
   const [selectedTrip, setSelectedTrip] = useState(null);
-  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   // Load trips from KV on mount
   useEffect(() => {
@@ -1625,9 +1621,9 @@ function App() {
     loadTrips();
   }, []);
 
-  // Save trips to KV whenever they change
+  // Save trips to KV whenever they change (but not during initial load)
   useEffect(() => {
-    if (trips.length > 0) saveTrips(trips);
+    if (!loading && trips.length > 0) saveTrips(trips);
   }, [trips]);
 
   async function loadTrips() {
@@ -1637,14 +1633,20 @@ function App() {
       if (Array.isArray(data) && data.length > 0) {
         setTrips(data);
       } else {
-        setTrips([DEMO_TRIP]);
+        // Try localStorage fallback
+        try {
+          const saved = localStorage.getItem('famtrip_trips');
+          const local = saved ? JSON.parse(saved) : [];
+          setTrips(local.length > 0 ? local : []);
+        } catch(e) { setTrips([]); }
       }
     } catch(e) {
-      // Fall back to localStorage if worker unavailable
       try {
         const saved = localStorage.getItem('famtrip_trips');
-        setTrips(saved ? JSON.parse(saved) : [DEMO_TRIP]);
-      } catch(e2) { setTrips([DEMO_TRIP]); }
+        setTrips(saved ? JSON.parse(saved) : []);
+      } catch(e2) { setTrips([]); }
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -1691,7 +1693,12 @@ function App() {
 
         {/* VIEWS */}
         {view === 'list' && (
-          <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} onDelete={id => setTrips(ts => ts.filter(t => t.id !== id))} />
+          loading
+            ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', flexDirection: 'column', gap: 12 }}>
+                <div className="spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
+                <div style={{ fontSize: 13, color: 'var(--warm-mid)' }}>Loading your trips…</div>
+              </div>
+            : <TripsListView trips={trips} onSelect={t => { setSelectedTrip(t); setView('detail'); }} onCreate={() => setView('new')} onDelete={id => setTrips(ts => ts.filter(t => t.id !== id))} />
         )}
         {view === 'new' && <NewTripView onSave={createTrip} onBack={() => setView('list')} />}
         {view === 'detail' && selectedTrip && (

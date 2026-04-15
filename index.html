@@ -1614,24 +1614,52 @@ function DestinationInput({ value, onChange }) {
 
 
 function App() {
-  const [trips, setTrips] = useState(() => {
-    try {
-      const saved = localStorage.getItem('famtrip_trips');
-      return saved ? JSON.parse(saved) : [DEMO_TRIP];
-    } catch(e) { return [DEMO_TRIP]; }
-  });
+  const [trips, setTrips] = useState([]);
   const [view, setView] = useState('list');
   const [selectedTrip, setSelectedTrip] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
-  // Save trips to localStorage whenever they change
-  useEffect(() => {
-    try { localStorage.setItem('famtrip_trips', JSON.stringify(trips)); }
-    catch(e) {}
-  }, [trips]);
-
+  // Load trips from KV on mount
   useEffect(() => {
     gcalHandleCallback();
+    loadTrips();
   }, []);
+
+  // Save trips to KV whenever they change
+  useEffect(() => {
+    if (trips.length > 0) saveTrips(trips);
+  }, [trips]);
+
+  async function loadTrips() {
+    try {
+      const res = await fetch(WORKER_URL + '/trips');
+      const data = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setTrips(data);
+      } else {
+        setTrips([DEMO_TRIP]);
+      }
+    } catch(e) {
+      // Fall back to localStorage if worker unavailable
+      try {
+        const saved = localStorage.getItem('famtrip_trips');
+        setTrips(saved ? JSON.parse(saved) : [DEMO_TRIP]);
+      } catch(e2) { setTrips([DEMO_TRIP]); }
+    }
+  }
+
+  async function saveTrips(tripsData) {
+    try {
+      // Save to localStorage as backup
+      localStorage.setItem('famtrip_trips', JSON.stringify(tripsData));
+      // Save to KV for cross-device sync
+      await fetch(WORKER_URL + '/trips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tripsData)
+      });
+    } catch(e) {}
+  }
 
   const updateTrip = (updates) => {
     const updated = { ...selectedTrip, ...updates };
